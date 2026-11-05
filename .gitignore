@@ -1,0 +1,34 @@
+# التبعيات
+/node_modules
+
+# مخرجات البناء
+/.next
+/out
+*.tsbuildinfo
+next-env.d.ts
+
+# ملفات البيئة والأسرار — لا تُرفع أبداً إلى GitHub
+.env
+.env.local
+.env.production
+
+# قاعدة البيانات المحلية (تُدار عبر Turso في الإنتاج)
+/db
+
+# الملفات المرفوعة محلياً (التخزين السحابي لاحقاً)
+/storage
+
+# السجلات
+dev.log
+server.log
+*.log
+
+# أدوات ومخرجات خاصة ببيئة التطوير
+/download
+/agent-ctx
+.DS_Store
+
+# نسخ تنزيل وضعت في public للرابط المباشر فقط — لا تُرفع إلى GitHub
+# (الحزمة تحتوي قاعدة البيانات وكلمات المرور!)
+/public/marsaa-platform-deploy.zip
+/public/DEPLOY-GUIDE-AR.md
