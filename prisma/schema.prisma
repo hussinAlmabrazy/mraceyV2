@@ -1,0 +1,573 @@
+// ============================================================
+// منصة إدارة مكاتب السفر والتخليص الجمركي — مخطط قاعدة البيانات
+// Multi-Tenant SaaS — عزل كامل عبر office_id في كل الجداول
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ الباقات والاشتراكات ============
+model Plan {
+  id               String   @id @default(cuid())
+  name             String
+  description      String?
+  maxUsers         Int      @default(5)
+  maxStorageMb     Int      @default(2048)
+  maxMonthlyReqs   Int      @default(100)
+  whatsappEnabled  Boolean  @default(false)
+  priceMonthly     Float    @default(0)
+  priceYearly      Float    @default(0)
+  isDefault        Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  licenses         License[]
+}
+
+// ============ المكتب (المستأجر) ============
+model Office {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  logoPath      String?
+  activityType  String   @default("BOTH") // CLEARANCE | TRAVEL | BOTH
+  phone         String?
+  whatsapp      String?
+  email         String?
+  address       String?
+  city          String?
+  managerName   String?
+  brandColor    String   @default("#0F766E")
+  workingHours  String?
+  about         String?
+  holidays      String? // JSON: تواريخ العطل الرسمية
+  status        String   @default("PENDING") // PENDING | ACTIVE | SUSPENDED | ARCHIVED
+  reqCounter    Int      @default(0)
+  storageUsedMb Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users          User[]
+  customers      Customer[]
+  categories     ServiceCategory[]
+  services       Service[]
+  requests       Request[]
+  shipments      Shipment[]
+  costItems      CostItem[]
+  payments       Payment[]
+  invoices       Invoice[]
+  templates      NotificationTemplate[]
+  messageLogs    MessageLog[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  licenses       License[]
+  exchangeRates  ExchangeRate[]
+}
+
+// ============ التراخيص ============
+model License {
+  id           String    @id @default(cuid())
+  officeId     String
+  office       Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  key          String    @unique
+  planId       String?
+  plan         Plan?     @relation(fields: [planId], references: [id])
+  durationDays Int       @default(365)
+  startDate    DateTime?
+  endDate      DateTime?
+  status       String    @default("PENDING") // PENDING | ACTIVE | EXPIRED | REVOKED
+  activatedAt  DateTime?
+  note         String?
+  createdAt    DateTime  @default(now())
+}
+
+// ============ المستخدمون (موظفون / مديرون) ============
+model User {
+  id           String    @id @default(cuid())
+  officeId     String? // فارغ لمدير النظام العام
+  email        String    @unique
+  phone        String?
+  name         String
+  passwordHash String?
+  role         String // SUPER_ADMIN | OFFICE_ADMIN | STAFF | BROKER | ACCOUNTANT
+  permissions  String? // JSON صلاحيات مخصصة إضافية
+  isActive     Boolean   @default(true)
+  invitedBy    String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  office        Office?    @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  assignedReqs  Request[]  @relation("AssignedRequests")
+  createdByReqs Request[]  @relation("CreatedByStaff")
+  assignedTasks Task[]     @relation("TaskAssignee")
+}
+
+// ============ العملاء (حساب مستقل لكل مكتب) ============
+model Customer {
+  id           String    @id @default(cuid())
+  officeId     String
+  office       Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  name         String
+  customerType String    @default("INDIVIDUAL") // INDIVIDUAL | COMPANY
+  taxNumber    String?
+  crNumber     String?
+  phone        String?
+  whatsapp     String?
+  email        String?
+  address      String?
+  passwordHash String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  requests  Request[]
+  payments  Payment[]
+  invoices  Invoice[]
+
+  @@index([officeId, email])
+  @@index([officeId, phone])
+}
+
+// ============ كتالوج الخدمات ============
+model ServiceCategory {
+  id        String   @id @default(cuid())
+  officeId  String
+  office    Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  name      String
+  icon      String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  services Service[]
+}
+
+model Service {
+  id            String   @id @default(cuid())
+  officeId      String
+  office        Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  categoryId    String?
+  category      ServiceCategory? @relation(fields: [categoryId], references: [id])
+  name          String
+  description   String?
+  icon          String?
+  price         Float?
+  priceLabel    String? // مثل: "حسب الطلب"
+  currency      String   @default("YER")
+  estimatedDays Int      @default(7) // أيام عمل
+  isClearance   Boolean  @default(false) // يتطلب ملف شحنة جمركية
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  requiredDocs ServiceRequiredDocument[]
+  stages       ServiceStage[]
+  formFields   FormField[]
+  requests     Request[]
+}
+
+model ServiceRequiredDocument {
+  id             String   @id @default(cuid())
+  serviceId      String
+  service        Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  isMandatory    Boolean  @default(true)
+  allowedFormats String   @default("PDF,JPG,PNG")
+  maxSizeMb      Int      @default(10)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+}
+
+model ServiceStage {
+  id               String   @id @default(cuid())
+  serviceId        String
+  service          Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  name             String
+  sortOrder        Int      @default(0)
+  isVisibleToClient Boolean @default(true)
+  notifyClient     Boolean  @default(false)
+  createdAt        DateTime @default(now())
+}
+
+model FormField {
+  id          String   @id @default(cuid())
+  serviceId   String
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  key         String
+  label       String
+  type        String   @default("TEXT") // TEXT | NUMBER | DATE | SELECT | TEXTAREA
+  options     String? // قائمة مفصولة بفواصل لـ SELECT
+  isRequired  Boolean  @default(false)
+  placeholder String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// ============ الطلبات ============
+model Request {
+  id                 String    @id @default(cuid())
+  officeId           String
+  office             Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  requestNumber      String    @unique
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id])
+  serviceId          String
+  service            Service   @relation(fields: [serviceId], references: [id])
+  status             String    @default("DRAFT") // DRAFT|SUBMITTED|UNDER_REVIEW|AWAITING_CLIENT|ACCEPTED|IN_PROGRESS|READY|COMPLETED|DELIVERED|REJECTED|CANCELLED
+  currentStageId     String?
+  trackingCode       String    @unique
+  formData           String? // JSON قيم الحقول الديناميكية
+  estimatedDays      Int?
+  acceptedAt         DateTime?
+  expectedCompletion DateTime?
+  completedAt        DateTime?
+  deliveredAt        DateTime?
+  rejectedReason     String?
+  missingDeadline    DateTime?
+  completionNotified DateTime? // لضمان إشعار الإنجاز مرة واحدة
+  currency           String    @default("YER")
+  rating             Int?
+  assignedToId       String?
+  assignedTo         User?     @relation("AssignedRequests", fields: [assignedToId], references: [id])
+  createdByStaffId   String?
+  createdByStaff     User?     @relation("CreatedByStaff", fields: [createdByStaffId], references: [id])
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  documents     RequestDocument[]
+  statusHistory RequestStatusHistory[]
+  comments      Comment[]
+  tasks         Task[]
+  shipment      Shipment?
+  costItems     CostItem[]
+  payments      Payment[]
+  invoices      Invoice[]
+  messageLogs   MessageLog[]
+  notifications Notification[]
+}
+
+model RequestDocument {
+  id             String   @id @default(cuid())
+  requestId      String
+  request        Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  officeId       String
+  requiredDocId  String? // مرتبط بمستند مطلوب في الخدمة
+  name           String
+  fileName       String?
+  filePath       String?
+  fileSize       Int?
+  mimeType       String?
+  version        Int      @default(1)
+  status         String   @default("UPLOADED") // UPLOADED | APPROVED | MISSING | REJECTED
+  reviewNote     String?
+  uploadedByType String   @default("CUSTOMER") // CUSTOMER | STAFF
+  uploadedByName String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([requestId, name])
+}
+
+model RequestStatusHistory {
+  id             String   @id @default(cuid())
+  requestId      String
+  request        Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromStatus     String?
+  toStatus       String
+  stageId        String?
+  stageName      String?
+  note           String?
+  isVisible      Boolean  @default(true)
+  attachmentPath String?
+  actorType      String   @default("STAFF") // STAFF | CUSTOMER | SYSTEM
+  actorName      String?
+  createdAt      DateTime @default(now())
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  requestId  String
+  request    Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  officeId   String
+  authorType String // STAFF | CUSTOMER
+  authorName String
+  body       String
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model Task {
+  id           String    @id @default(cuid())
+  officeId     String
+  requestId    String?
+  request      Request?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  title        String
+  note         String?
+  dueAt        DateTime?
+  assigneeId   String?
+  assignee     User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  isDone       Boolean   @default(false)
+  doneAt       DateTime?
+  createdByName String?
+  createdAt    DateTime  @default(now())
+}
+
+// ============ التخليص الجمركي ============
+model Shipment {
+  id              String   @id @default(cuid())
+  requestId       String   @unique
+  request         Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  officeId        String
+  office          Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  billOfLadingNo  String? // رقم بوليصة الشحن
+  containerNos    String? // أرقام الحاويات مفصولة بفواصل
+  containerType   String? // 20FT | 40FT | LCL | OTHER
+  supplierName    String?
+  importerName    String?
+  originCountry   String?
+  arrivalPort     String?
+  carrier         String?
+  arrivalDate     DateTime?
+  declarationNo   String? // رقم البيان الجمركي
+  goodsType       String?
+  weight          Float?
+  packagesCount   Int?
+  value           Float?
+  currency        String   @default("USD")
+  releasePermitNo String? // إذن الإفراج النهائي
+  releasePermitAt DateTime?
+  releasePermitPath String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items     ShipmentItem[]
+  steps     RegulatoryStep[]
+  checklist ChecklistItem[]
+}
+
+model ShipmentItem {
+  id            String    @id @default(cuid())
+  shipmentId    String
+  shipment      Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  description   String
+  hsCodeId      String?
+  hsCode        HSCode?   @relation(fields: [hsCodeId], references: [id])
+  hsCodeText    String?
+  originCountry String?
+  quantity      Float?
+  unit          String?
+  weight        Float?
+  value         Float?
+  currency      String    @default("USD")
+  dutyRate      Float? // نسبة الجمارك المطبقة %
+  createdAt     DateTime  @default(now())
+}
+
+model HSCode {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  descriptionAr String
+  descriptionEn String?
+  unit          String?
+  dutyRate      Float    @default(0) // نسبة الرسوم الجمركية %
+  salesTaxRate  Float    @default(0)
+  otherTaxRate  Float    @default(0)
+  isActive      Boolean  @default(true)
+  updatedAt     DateTime @default(now())
+  shipmentItems ShipmentItem[]
+}
+
+model RegulatoryStep {
+  id            String   @id @default(cuid())
+  shipmentId    String
+  shipment      Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  type          String   @default("OTHER") // DECLARATION | INSPECTION | STANDARDS | HEALTH | RELEASE | OTHER
+  title         String
+  scheduledAt   DateTime?
+  result        String? // PASS | ISSUE | PENDING
+  notes         String?
+  attachmentPath String?
+  status        String   @default("PENDING") // PENDING | DONE
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model ChecklistItem {
+  id         String   @id @default(cuid())
+  shipmentId String
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  label      String
+  isDone     Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  doneAt     DateTime?
+}
+
+// ============ الحسابات المصغرة ============
+model CostItem {
+  id           String   @id @default(cuid())
+  officeId     String
+  office       Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  requestId    String
+  request      Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  category     String   @default("OTHER") // CUSTOMS|TAX|STORAGE|HANDLING|PORT|REGULATORY|OFFICE_FEE|OTHER
+  label        String
+  amount       Float
+  currency     String   @default("YER")
+  exchangeRate Float    @default(1)
+  amountBase   Float    @default(0) // محوّل للعملة الأساسية YER
+  isOfficeFee  Boolean  @default(false) // أتعاب المكتب مقابل مصاريف نيابة عن العميل
+  note         String?
+  createdByName String?
+  createdAt    DateTime @default(now())
+}
+
+model Payment {
+  id           String   @id @default(cuid())
+  officeId     String
+  office       Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  requestId    String?
+  request      Request? @relation(fields: [requestId], references: [id])
+  amount       Float
+  currency     String   @default("YER")
+  exchangeRate Float    @default(1)
+  amountBase   Float    @default(0)
+  method       String   @default("CASH") // CASH | TRANSFER | REMITTANCE
+  reference    String?
+  note         String?
+  attachmentPath String?
+  receivedByName String?
+  createdAt    DateTime @default(now())
+}
+
+model Invoice {
+  id           String   @id @default(cuid())
+  officeId     String
+  office       Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  requestId    String?
+  request      Request? @relation(fields: [requestId], references: [id])
+  invoiceNumber String  @unique
+  items        String // JSON: بنود الفاتورة
+  subtotal     Float    @default(0)
+  total        Float    @default(0)
+  currency     String   @default("YER")
+  status       String   @default("DRAFT") // DRAFT | SENT | PAID | CANCELLED
+  issueDate    DateTime @default(now())
+  dueDate      DateTime?
+  note         String?
+  createdAt    DateTime @default(now())
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  officeId  String
+  office    Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  currency  String // USD | SAR | YER
+  rate      Float // مقابل الريال اليمني
+  updatedAt DateTime @updatedAt
+
+  @@unique([officeId, currency])
+}
+
+// ============ الإشعارات ============
+model NotificationTemplate {
+  id        String   @id @default(cuid())
+  officeId  String? // فارغ = قالب عام لكل المكاتب
+  office    Office?  @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  event     String // NEW_REQUEST|RECEIVED|MISSING_DOCS|ACCEPTED|REJECTED|STAGE_CHANGE|DELAYED|ASSIGNED|COMPLETED|PAYMENT_DUE
+  channel   String   @default("WHATSAPP") // INAPP | EMAIL | WHATSAPP | SMS
+  subject   String?
+  body      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([officeId, event, channel])
+}
+
+model Notification {
+  id               String   @id @default(cuid())
+  officeId         String
+  office           Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  recipientType    String   @default("CUSTOMER") // CUSTOMER | STAFF
+  customerId       String?
+  userId           String?
+  requestId        String?
+  request          Request? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  title            String
+  body             String
+  link             String?
+  isRead           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([officeId, recipientType, customerId])
+  @@index([officeId, recipientType, userId])
+}
+
+model MessageLog {
+  id        String   @id @default(cuid())
+  officeId  String
+  office    Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  requestId String?
+  request   Request? @relation(fields: [requestId], references: [id])
+  channel   String // INAPP | EMAIL | WHATSAPP | SMS
+  recipient String
+  subject   String?
+  body      String
+  status    String   @default("SENT") // QUEUED | SENT | FAILED
+  error     String?
+  attempts  Int      @default(1)
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+// ============ سجل التدقيق ============
+model AuditLog {
+  id         String   @id @default(cuid())
+  officeId   String?
+  office     Office?  @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  actorType  String   @default("STAFF") // SUPER_ADMIN | STAFF | CUSTOMER | SYSTEM
+  actorId    String?
+  actorName  String
+  action     String
+  entityType String
+  entityId   String?
+  details    String? // JSON
+  createdAt  DateTime @default(now())
+
+  @@index([officeId, createdAt])
+}
+
+// ============ استعادة كلمة المرور (OTP) ============
+model PasswordReset {
+  id          String    @id @default(cuid())
+  accountType String // USER | CUSTOMER
+  accountId   String // معرّف السجل في User أو Customer
+  officeId    String? // للمكتب (طلبات العملاء فقط)
+  codeHash    String // SHA-256 للرمز السداسي — لا يُخزَّن الرمز نصاً أبداً
+  expiresAt   DateTime // صلاحية 15 دقيقة
+  attempts    Int       @default(0) // حد أقصى 5 محاولات تحقق
+  usedAt      DateTime? // وقت الاستخدام الناجح أو الإبطال
+  createdAt   DateTime  @default(now())
+
+  @@index([accountType, accountId, createdAt])
+}
+
+// ============ إعدادات المنصة ============
+model PlatformSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
