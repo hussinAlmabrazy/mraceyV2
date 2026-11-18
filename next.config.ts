@@ -35,6 +35,7 @@ const nextConfig: NextConfig = {
         "*.space-z.ai",
         "localhost:3000",
         "*.vercel.app",
+        "*.netlify.app",
       ],
     },
   },
